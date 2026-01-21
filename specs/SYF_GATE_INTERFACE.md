@@ -53,12 +53,12 @@ No optional inputs are permitted.
 
 ## Reason Codes (Closed Set)
 
-Examples:
-- `INV_INVALID_INPUT`
-- `INV_OUT_OF_BOUNDS`
-- `INV_BUDGET_EXCEEDED`
-- `INV_CADENCE_EXCEEDED`
-- `INV_SIGNAL_INVALID`
-- `INV_STATE_IMPOSSIBLE`
+- `NONE` — No violation (used with ALLOW)
+- `INV_INVALID_INPUT` — Malformed input structure
+- `INV_OUT_OF_BOUNDS` — Parameter exceeds hard-coded limit
+- `INV_BUDGET_EXCEEDED` — Action exceeds budget constraint
+- `INV_CADENCE_EXCEEDED` — Action exceeds cadence constraint
+- `INV_SIGNAL_INVALID` — Signal violates invariant constraints
+- `INV_STATE_IMPOSSIBLE` — Action would create impossible state
 
 Free-form messages are forbidden.
