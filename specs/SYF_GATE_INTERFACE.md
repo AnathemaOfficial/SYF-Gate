@@ -32,26 +32,6 @@ No optional inputs are permitted.
 
 ---
 
-## NULL Semantics
-
-The term "canonical NULL" refers to the **explicit absence of a value**
-where that value is not required for evaluation.
-
-- Canonical NULL is **not an error condition**
-- Canonical NULL is **not ambiguous** — it is a determinate state
-- A field with canonical NULL **must be explicitly marked as NULL**
-- Omission or undefined state is **not NULL** — it is `INV_INVALID_INPUT`
-
-Example use cases:
-- R_local may be NULL when the action does not require local resistance
-- context_min may be NULL when no context is systemically required
-
-**Fail-Closed Rule:**  
-If NULL handling is ambiguous or undefined for any field,
-the Gate **must return DENY** with `INV_INVALID_INPUT`.
-
----
-
 ## Output — Verdict
 
 - `verdict`  
