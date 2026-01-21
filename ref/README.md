@@ -38,10 +38,13 @@ ref/            ← SKETCH (non-canonical, illustrative)
 
 ## Files
 
-| File | Language | Purpose |
-|------|----------|---------|
-| `syf_gate_ref.rs` | Rust | `no_std`, zero-allocation reference |
-| `syf_gate_ref.py` | Python | Pure function reference |
+| File | Language | Purpose | Status |
+|------|----------|---------|--------|
+| `syf_gate_ref.rs` | Rust | `no_std`, zero-allocation reference | Planned |
+| `syf_gate_ref.py` | Python | Pure function reference | Planned |
+
+**Note:** Reference implementations are currently planned but not yet committed.  
+When available, they will serve as feasibility demonstrations only.
 
 ---
 
