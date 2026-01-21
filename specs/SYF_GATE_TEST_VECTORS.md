@@ -44,6 +44,41 @@
 
 ---
 
+## TV-G-006 — Budget Exceeded
+
+- Valid identity and action
+- Budget allocation exceeds hard-coded limit
+- Expected verdict: `DENY`
+- Reason: `INV_BUDGET_EXCEEDED`
+
+---
+
+## TV-G-007 — Cadence Exceeded
+
+- Valid identity and action
+- Action frequency violates cadence bound
+- Expected verdict: `DENY`
+- Reason: `INV_CADENCE_EXCEEDED`
+
+---
+
+## TV-G-008 — Impossible State
+
+- Input would create systemically impossible state
+- Expected verdict: `DENY`
+- Reason: `INV_STATE_IMPOSSIBLE`
+
+---
+
+## TV-G-009 — Valid Canonical NULL
+
+- Signal contains canonical NULL for R_local
+- NULL is explicitly marked and valid for this action
+- All other invariants satisfied
+- Expected verdict: `ALLOW`
+
+---
+
 ## Global Property
 
 For any CanonicalInput,
