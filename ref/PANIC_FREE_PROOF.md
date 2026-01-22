@@ -4,6 +4,8 @@
 **Scope:** `ref/syf_gate_ref.rs`  
 **Verdict:** ✅ **PANIC-FREE BY CONSTRUCTION**
 
+**Note:** Line numbers are illustrative; proof relies on control-flow, not absolute offsets.
+
 ---
 
 ## 1. Methodology
@@ -39,7 +41,7 @@ The following operations can panic in safe Rust:
 ### 3.1 Potential Panic Points
 
 ```rust
-// Lines 164-171: copy_from_slice calls
+// The guard block immediately precedes these copy_from_slice calls
 subject_id.copy_from_slice(raw.subject_id);   // Panics if len != 32
 scope_hash.copy_from_slice(raw.scope_hash);   // Panics if len != 32
 context_min.copy_from_slice(raw.context_min); // Panics if len != 32
@@ -48,7 +50,7 @@ context_min.copy_from_slice(raw.context_min); // Panics if len != 32
 ### 3.2 Guard Analysis
 
 ```rust
-// Lines 154-161: Length guard
+// Length guard block immediately precedes the copy_from_slice calls
 if raw.subject_id.len() != 32 
    || raw.scope_hash.len() != 32 
    || raw.context_min.len() != 32 {
@@ -64,7 +66,7 @@ Entry: syf_gate_entrypoint(raw)
     ▼
 Check: raw.subject_id.len() != 32?
     │
-    ├─ YES ──► return DENY (line 155-160)
+    ├─ YES ──► return DENY
     │          copy_from_slice NEVER REACHED
     │
     └─ NO ───► Check: raw.scope_hash.len() != 32?
@@ -199,8 +201,7 @@ cargo +nightly miri test
 
 **`syf_gate_ref.rs` is panic-free by construction.**
 
-The length guard on line 154 ensures that `copy_from_slice` operations
-on lines 164-171 cannot panic. This has been verified by:
+The length guard block immediately precedes the `copy_from_slice` operations, ensuring they cannot panic. This has been verified by:
 
 1. Static control flow analysis
 2. Exhaustive boundary testing
