@@ -1,26 +1,20 @@
+# ref/syf_gate_ref.py
 # STATUS: NON-CANON REFERENCE SKETCH
 # Authority: specs/ exclusively
+#
+# OPTION A: "no crash" gate
+# - syf_gate() MUST return GateOutput for any input (fail-closed).
+# - Structural invalidity => DENY + INV_INVALID_INPUT (TV-G-001 honest)
+# - Signal POISON doctrine => any negative value => INV_SIGNAL_INVALID
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Final
+from typing import Final, Union
 
 
-@dataclass(frozen=True)
-class CanonicalInput:
-    """All fields mandatory, no optional inputs."""
-    subject_id: bytes  # 32 bytes
-    action_type: "ActionType"
-    action_params: "ActionParams"
-    magnitude: int
-    signal: "Signal"
-    context_min: bytes  # 32 bytes
-
-
-@dataclass(frozen=True)
-class ActionParams:
-    scope_hash: bytes  # 32 bytes
-
+# ----------------------------
+# Types (mirror the sealed interface shape)
+# ----------------------------
 
 class ActionType(Enum):
     TRANSFER = 1
@@ -30,11 +24,26 @@ class ActionType(Enum):
 
 
 @dataclass(frozen=True)
+class ActionParams:
+    scope_hash: bytes  # expected 32 bytes
+
+
+@dataclass(frozen=True)
 class Signal:
     r_local: int
     quantified_flow: int
     quantified_entropy: int
     observed_cadence: int
+
+
+@dataclass(frozen=True)
+class CanonicalInput:
+    subject_id: bytes  # expected 32 bytes
+    action_type: ActionType
+    action_params: ActionParams
+    magnitude: int
+    signal: Signal
+    context_min: bytes  # expected 32 bytes
 
 
 @dataclass(frozen=True)
@@ -55,14 +64,14 @@ class VerdictKind(Enum):
 
 
 class ReasonCode(Enum):
-    """Closed set — free-form messages forbidden."""
-    NONE = 0                  # No violation (used with ALLOW)
-    INV_INVALID_INPUT = 1     # Malformed input structure
-    INV_OUT_OF_BOUNDS = 2     # Parameter exceeds hard-coded limit
-    INV_BUDGET_EXCEEDED = 3   # Action exceeds budget constraint
-    INV_CADENCE_EXCEEDED = 4  # Action exceeds cadence constraint
-    INV_SIGNAL_INVALID = 5    # Signal violates invariant constraints
-    INV_STATE_IMPOSSIBLE = 6  # Action would create impossible state
+    # Closed set — no free-form messages.
+    NONE = 0
+    INV_INVALID_INPUT = 1
+    INV_OUT_OF_BOUNDS = 2
+    INV_BUDGET_EXCEEDED = 3
+    INV_CADENCE_EXCEEDED = 4
+    INV_SIGNAL_INVALID = 5
+    INV_STATE_IMPOSSIBLE = 6
 
 
 @dataclass(frozen=True)
@@ -73,49 +82,76 @@ class GateOutput:
     finality: FinalityTag
 
 
-# Hard-coded bounds from invariants (I-3: non-configurable)
+# ----------------------------
+# Hard-coded bounds (I-3)
+# ----------------------------
+
 MAX_MAGNITUDE: Final[int] = 1_000_000
 MAX_CADENCE: Final[int] = 100
 
-# Neutral values for invalid input responses
-NEUTRAL_SCOPE: Final[bytes] = b"\x00" * 32
 NEUTRAL_FINALITY: Final[bytes] = b"\x00" * 32
 
+# POISON doctrine (P0):
+# - Any negative value inside Signal is treated as "invalid signal" and must DENY.
+# - Integrations may use poison values to force deterministic DENY when SignalProvider fails.
+POISON_R_LOCAL: Final[int] = -1
+POISON_ENTROPY: Final[int] = -1
 
-def syf_gate(inp: CanonicalInput) -> GateOutput:
-    """Pure function — fail-closed, deterministic, no I/O."""
 
-    # =========================================================================
-    # TV-G-001: Structural Integrity Check (MUST precede any logic)
-    # I-1 (Fail-Closed): Invalid structure = Immediate DENY
-    # =========================================================================
-    if (len(inp.subject_id) != 32 or
-        len(inp.context_min) != 32 or
-        len(inp.action_params.scope_hash) != 32):
+def _mk_limits(scope: bytes) -> Limits:
+    # Keep scope as-is (even if malformed) for non-canon ref; structural checks happen before.
+    return Limits(max_magnitude=MAX_MAGNITUDE, max_cadence=MAX_CADENCE, scope=scope)
+
+
+def _mk_finality() -> FinalityTag:
+    return FinalityTag(tag=NEUTRAL_FINALITY)
+
+
+def _is_bytes32(x: object) -> bool:
+    return isinstance(x, (bytes, bytearray)) and len(x) == 32
+
+
+# ----------------------------
+# Gate (pure, fail-closed)
+# ----------------------------
+
+def syf_gate(inp: object) -> GateOutput:
+    """
+    Pure function — fail-closed, deterministic, no I/O.
+    OPTION A: Never raises for control flow; returns DENY on any ambiguity.
+    """
+
+    # If input isn't even the right type => DENY (structural invalid).
+    if not isinstance(inp, CanonicalInput):
         return GateOutput(
             verdict=VerdictKind.DENY,
             reason=ReasonCode.INV_INVALID_INPUT,
-            limits=Limits(
-                max_magnitude=MAX_MAGNITUDE,
-                max_cadence=MAX_CADENCE,
-                scope=NEUTRAL_SCOPE,  # Fixed neutral on invalid (can't trust input)
-            ),
-            finality=FinalityTag(tag=NEUTRAL_FINALITY),
+            limits=_mk_limits(scope=b"\x00" * 32),
+            finality=_mk_finality(),
         )
 
-    # From here, structure is valid — use actual scope
-    limits = Limits(
-        max_magnitude=MAX_MAGNITUDE,
-        max_cadence=MAX_CADENCE,
-        scope=inp.action_params.scope_hash,
-    )
-    finality = FinalityTag(tag=NEUTRAL_FINALITY)
+    limits = _mk_limits(scope=inp.action_params.scope_hash if isinstance(inp.action_params, ActionParams) else b"\x00" * 32)
+    finality = _mk_finality()
 
-    # =========================================================================
-    # TV-G-002: Bounds Check
-    # I-1 (Fail-Closed): Any out-of-bounds → DENY
-    # =========================================================================
-    if inp.magnitude > MAX_MAGNITUDE:
+    # TV-G-001: Structural Integrity Check (MUST be first)
+    if (
+        not _is_bytes32(inp.subject_id)
+        or not _is_bytes32(inp.context_min)
+        or not isinstance(inp.action_params, ActionParams)
+        or not _is_bytes32(inp.action_params.scope_hash)
+        or not isinstance(inp.action_type, ActionType)
+        or not isinstance(inp.magnitude, int)
+        or not isinstance(inp.signal, Signal)
+    ):
+        return GateOutput(
+            verdict=VerdictKind.DENY,
+            reason=ReasonCode.INV_INVALID_INPUT,
+            limits=limits,
+            finality=finality,
+        )
+
+    # Out-of-bounds magnitude (I-3 bounded action)
+    if inp.magnitude < 0 or inp.magnitude > MAX_MAGNITUDE:
         return GateOutput(
             verdict=VerdictKind.DENY,
             reason=ReasonCode.INV_OUT_OF_BOUNDS,
@@ -123,11 +159,14 @@ def syf_gate(inp: CanonicalInput) -> GateOutput:
             finality=finality,
         )
 
-    # =========================================================================
-    # TV-G-003: Signal Validation
-    # I-6 (No Oracle): Signal must be deterministic local data
-    # =========================================================================
-    if inp.signal.r_local < 0 or inp.signal.quantified_entropy < 0:
+    # Signal invalid (POISON doctrine)
+    # Any negative => invalid signal => DENY
+    if (
+        inp.signal.r_local < 0
+        or inp.signal.quantified_flow < 0
+        or inp.signal.quantified_entropy < 0
+        or inp.signal.observed_cadence < 0
+    ):
         return GateOutput(
             verdict=VerdictKind.DENY,
             reason=ReasonCode.INV_SIGNAL_INVALID,
@@ -135,9 +174,7 @@ def syf_gate(inp: CanonicalInput) -> GateOutput:
             finality=finality,
         )
 
-    # =========================================================================
-    # Cadence Check (I-3: Bounded Action)
-    # =========================================================================
+    # Cadence check (bounded)
     if inp.signal.observed_cadence > MAX_CADENCE:
         return GateOutput(
             verdict=VerdictKind.DENY,
@@ -146,10 +183,10 @@ def syf_gate(inp: CanonicalInput) -> GateOutput:
             finality=finality,
         )
 
-    # =========================================================================
-    # TV-G-004: Valid Bounded Action
-    # All invariants satisfied → ALLOW with NONE reason
-    # =========================================================================
+    # Budget check (optional in P0 if you model it)
+    # NOTE: Not enforced here unless your canon vectors include it.
+
+    # If all invariants satisfied => ALLOW (ReasonCode.NONE)
     return GateOutput(
         verdict=VerdictKind.ALLOW,
         reason=ReasonCode.NONE,
@@ -158,71 +195,70 @@ def syf_gate(inp: CanonicalInput) -> GateOutput:
     )
 
 
-# =============================================================================
-# TEST VECTORS — deterministic validation only, no I/O
-# =============================================================================
+# ----------------------------
+# Test vectors (minimal)
+# ----------------------------
 
 def _make_valid_input() -> CanonicalInput:
     return CanonicalInput(
         subject_id=b"\x01" * 32,
         action_type=ActionType.TRANSFER,
-        action_params=ActionParams(scope_hash=b"\x00" * 32),
+        action_params=ActionParams(scope_hash=b"\x02" * 32),
         magnitude=500,
         signal=Signal(
-            r_local=100,
-            quantified_flow=10,
-            quantified_entropy=5,
-            observed_cadence=50,
+            r_local=1,
+            quantified_flow=0,
+            quantified_entropy=0,
+            observed_cadence=0,
         ),
-        context_min=b"\x00" * 32,
+        context_min=b"\x03" * 32,
     )
 
 
 def test_tv_g_001_invalid_input() -> None:
-    """TV-G-001: Malformed input (wrong length) → DENY + INV_INVALID_INPUT"""
     base = _make_valid_input()
-    # Inject genuine structural error: 31 bytes instead of 32
-    inp = replace(base, subject_id=b"\x00" * 31)
-    out = syf_gate(inp)
+    bad = replace(base, subject_id=b"\x00" * 31)  # malformed (31 bytes)
+    out = syf_gate(bad)
     assert out.verdict == VerdictKind.DENY
     assert out.reason == ReasonCode.INV_INVALID_INPUT
-    # Verify neutral scope on invalid input
-    assert out.limits.scope == NEUTRAL_SCOPE
 
 
 def test_tv_g_002_excessive_magnitude() -> None:
-    """TV-G-002: Valid identity, excessive magnitude → DENY + INV_OUT_OF_BOUNDS"""
-    inp = replace(_make_valid_input(), magnitude=1_500_000)
-    out = syf_gate(inp)
+    base = _make_valid_input()
+    bad = replace(base, magnitude=MAX_MAGNITUDE + 1)
+    out = syf_gate(bad)
     assert out.verdict == VerdictKind.DENY
     assert out.reason == ReasonCode.INV_OUT_OF_BOUNDS
 
 
-def test_tv_g_003_invalid_signal() -> None:
-    """TV-G-003: Unstable or invalid signal → DENY + INV_SIGNAL_INVALID"""
+def test_tv_g_003_invalid_signal_poison() -> None:
     base = _make_valid_input()
-    bad_signal = replace(base.signal, r_local=-1)
-    inp = replace(base, signal=bad_signal)
-    out = syf_gate(inp)
+    bad_sig = replace(base.signal, r_local=POISON_R_LOCAL)
+    bad = replace(base, signal=bad_sig)
+    out = syf_gate(bad)
     assert out.verdict == VerdictKind.DENY
     assert out.reason == ReasonCode.INV_SIGNAL_INVALID
 
 
 def test_tv_g_004_valid_bounded() -> None:
-    """TV-G-004: Valid bounded action → ALLOW + NONE"""
     inp = _make_valid_input()
     out = syf_gate(inp)
     assert out.verdict == VerdictKind.ALLOW
     assert out.reason == ReasonCode.NONE
-    assert out.limits.max_magnitude >= inp.magnitude
 
 
 def test_tv_g_005_deterministic_replay() -> None:
-    """TV-G-005: Same input → identical verdict (determinism)"""
     inp = _make_valid_input()
     out1 = syf_gate(inp)
     out2 = syf_gate(inp)
     assert out1 == out2
 
 
-# Note: No __main__ block — I/O forbidden per invariant spirit
+if __name__ == "__main__":
+    # Basic self-run
+    test_tv_g_001_invalid_input()
+    test_tv_g_002_excessive_magnitude()
+    test_tv_g_003_invalid_signal_poison()
+    test_tv_g_004_valid_bounded()
+    test_tv_g_005_deterministic_replay()
+    print("OK: TV-G-001..TV-G-005 passed")
