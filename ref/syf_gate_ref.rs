@@ -1,6 +1,10 @@
 // STATUS: NON-CANON REFERENCE SKETCH
 // Authority: specs/ exclusively
 // Security: Panic-free by construction (length-checked before copy)
+//
+// HARDENING (API surface audit): All struct fields are private with const getters.
+// Prevents integrators from treating the reference as a "pub field playground"
+// that gives bad habits (same pattern as Budget(pub u32) in AB).
 
 #![no_std]
 
@@ -11,19 +15,48 @@ use core::fmt;
 // =============================================================================
 
 /// CanonicalInput — the typed, validated input to syf_gate().
+///
+/// Fields are private: construction via `CanonicalInput::new()` only.
+/// This prevents integrators from partially mutating inputs between calls.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CanonicalInput {
-    pub subject_id: [u8; 32],
-    pub action_type: ActionType,
-    pub action_params: ActionParams,
-    pub magnitude: u64,
-    pub signal: Signal,
-    pub context_min: [u8; 32],
+    subject_id: [u8; 32],
+    action_type: ActionType,
+    action_params: ActionParams,
+    magnitude: u64,
+    signal: Signal,
+    context_min: [u8; 32],
+}
+
+impl CanonicalInput {
+    /// Construct a canonical input. All fields mandatory, no defaults.
+    pub const fn new(
+        subject_id: [u8; 32],
+        action_type: ActionType,
+        action_params: ActionParams,
+        magnitude: u64,
+        signal: Signal,
+        context_min: [u8; 32],
+    ) -> Self {
+        Self { subject_id, action_type, action_params, magnitude, signal, context_min }
+    }
+
+    pub const fn subject_id(&self) -> [u8; 32] { self.subject_id }
+    pub const fn action_type(&self) -> ActionType { self.action_type }
+    pub const fn action_params(&self) -> ActionParams { self.action_params }
+    pub const fn magnitude(&self) -> u64 { self.magnitude }
+    pub const fn signal(&self) -> Signal { self.signal }
+    pub const fn context_min(&self) -> [u8; 32] { self.context_min }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ActionParams {
-    pub scope_hash: [u8; 32],
+    scope_hash: [u8; 32],
+}
+
+impl ActionParams {
+    pub const fn new(scope_hash: [u8; 32]) -> Self { Self { scope_hash } }
+    pub const fn scope_hash(&self) -> [u8; 32] { self.scope_hash }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -34,23 +67,63 @@ pub enum ActionType {
     Write,
 }
 
+/// Signal — deterministic local measurements (I-6: No Oracle).
+///
+/// Fields are private. Construct via `Signal::new()`, read via getters.
+/// Negative values in r_local / quantified_entropy trigger POISON (I-1).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Signal {
-    pub r_local: i64,
-    pub quantified_flow: i64,
-    pub quantified_entropy: i64,
-    pub observed_cadence: u64,
+    r_local: i64,
+    quantified_flow: i64,
+    quantified_entropy: i64,
+    observed_cadence: u64,
 }
 
+impl Signal {
+    pub const fn new(
+        r_local: i64,
+        quantified_flow: i64,
+        quantified_entropy: i64,
+        observed_cadence: u64,
+    ) -> Self {
+        Self { r_local, quantified_flow, quantified_entropy, observed_cadence }
+    }
+
+    pub const fn r_local(&self) -> i64 { self.r_local }
+    pub const fn quantified_flow(&self) -> i64 { self.quantified_flow }
+    pub const fn quantified_entropy(&self) -> i64 { self.quantified_entropy }
+    pub const fn observed_cadence(&self) -> u64 { self.observed_cadence }
+}
+
+/// Limits — hard-coded bounds (I-3: non-configurable).
+///
+/// Fields are private: limits are set by the Gate, not by the integrator.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Limits {
-    pub max_magnitude: u64,
-    pub max_cadence: u64,
-    pub scope: [u8; 32],
+    max_magnitude: u64,
+    max_cadence: u64,
+    scope: [u8; 32],
 }
 
+impl Limits {
+    pub const fn new(max_magnitude: u64, max_cadence: u64, scope: [u8; 32]) -> Self {
+        Self { max_magnitude, max_cadence, scope }
+    }
+
+    pub const fn max_magnitude(&self) -> u64 { self.max_magnitude }
+    pub const fn max_cadence(&self) -> u64 { self.max_cadence }
+    pub const fn scope(&self) -> [u8; 32] { self.scope }
+}
+
+/// FinalityTag — opaque 32-byte finality marker.
+/// Inner is private: no direct mutation.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct FinalityTag(pub [u8; 32]);
+pub struct FinalityTag([u8; 32]);
+
+impl FinalityTag {
+    pub const fn new(bytes: [u8; 32]) -> Self { Self(bytes) }
+    pub const fn as_bytes(&self) -> [u8; 32] { self.0 }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VerdictKind {
@@ -76,12 +149,26 @@ pub enum ReasonCode {
     InvStateImpossible,
 }
 
+/// GateOutput — immutable verdict structure.
+///
+/// Fields are private: the Gate produces output, integrators only read it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GateOutput {
-    pub verdict: VerdictKind,
-    pub reason: ReasonCode,
-    pub limits: Limits,
-    pub finality: FinalityTag,
+    verdict: VerdictKind,
+    reason: ReasonCode,
+    limits: Limits,
+    finality: FinalityTag,
+}
+
+impl GateOutput {
+    const fn new(verdict: VerdictKind, reason: ReasonCode, limits: Limits, finality: FinalityTag) -> Self {
+        Self { verdict, reason, limits, finality }
+    }
+
+    pub const fn verdict(&self) -> VerdictKind { self.verdict }
+    pub const fn reason(&self) -> ReasonCode { self.reason }
+    pub const fn limits(&self) -> Limits { self.limits }
+    pub const fn finality(&self) -> FinalityTag { self.finality }
 }
 
 // =============================================================================
@@ -97,25 +184,16 @@ const NEUTRAL_FINALITY: [u8; 32] = [0u8; 32];
 // POISON VALUES — For fail-closed signal handling
 // =============================================================================
 
-// =============================================================================
-// POISON VALUES — For fail-closed signal handling
-// =============================================================================
-
 /// CANONICAL RULE: Any negative value in Signal fields (r_local, quantified_flow,
 /// quantified_entropy) triggers INV_SIGNAL_INVALID per I-1 (Fail-Closed).
 ///
 /// POISON_SIGNAL: Used when signal cannot be computed by SignalProvider.
 /// Negative r_local and entropy guarantee INV_SIGNAL_INVALID.
-/// 
+///
 /// Usage (in SignalProvider):
 /// ```
 /// if cannot_compute_signal() {
-///     return Signal {
-///         r_local: POISON_R_LOCAL,
-///         quantified_flow: POISON_FLOW,
-///         quantified_entropy: POISON_ENTROPY,
-///         observed_cadence: POISON_CADENCE,
-///     };
+///     return Signal::new(POISON_R_LOCAL, POISON_FLOW, POISON_ENTROPY, POISON_CADENCE);
 /// }
 /// ```
 #[allow(dead_code)]
@@ -146,23 +224,19 @@ pub struct RawInput<'a> {
 /// This wrapper exists solely to demonstrate TV-G-001 compliance.
 pub fn syf_gate_entrypoint(raw: RawInput<'_>) -> GateOutput {
     // Neutral limits for immediate rejection (fixed-size, no drift)
-    let neutral_limits = Limits {
-        max_magnitude: MAX_MAGNITUDE,
-        max_cadence: MAX_CADENCE,
-        scope: NEUTRAL_SCOPE,
-    };
+    let neutral_limits = Limits::new(MAX_MAGNITUDE, MAX_CADENCE, NEUTRAL_SCOPE);
 
     // =========================================================================
     // TV-G-001: Structural Integrity Check (MUST precede any logic)
     // I-1 (Fail-Closed): Malformed input => DENY + InvInvalidInput
     // =========================================================================
     if raw.subject_id.len() != 32 || raw.scope_hash.len() != 32 || raw.context_min.len() != 32 {
-        return GateOutput {
-            verdict: VerdictKind::Deny,
-            reason: ReasonCode::InvInvalidInput,
-            limits: neutral_limits,
-            finality: FinalityTag(NEUTRAL_FINALITY),
-        };
+        return GateOutput::new(
+            VerdictKind::Deny,
+            ReasonCode::InvInvalidInput,
+            neutral_limits,
+            FinalityTag::new(NEUTRAL_FINALITY),
+        );
     }
 
     // Convert to canonical fixed-size arrays (no alloc, no panic)
@@ -175,14 +249,14 @@ pub fn syf_gate_entrypoint(raw: RawInput<'_>) -> GateOutput {
     let mut context_min = [0u8; 32];
     context_min.copy_from_slice(raw.context_min);
 
-    let input = CanonicalInput {
+    let input = CanonicalInput::new(
         subject_id,
-        action_type: raw.action_type,
-        action_params: ActionParams { scope_hash },
-        magnitude: raw.magnitude,
-        signal: raw.signal,
+        raw.action_type,
+        ActionParams::new(scope_hash),
+        raw.magnitude,
+        raw.signal,
         context_min,
-    };
+    );
 
     syf_gate(input)
 }
@@ -193,60 +267,56 @@ pub fn syf_gate_entrypoint(raw: RawInput<'_>) -> GateOutput {
 
 /// SYF Gate pure function — fail-closed, deterministic, no panics.
 pub fn syf_gate(input: CanonicalInput) -> GateOutput {
-    let limits = Limits {
-        max_magnitude: MAX_MAGNITUDE,
-        max_cadence: MAX_CADENCE,
-        scope: input.action_params.scope_hash,
-    };
+    let limits = Limits::new(MAX_MAGNITUDE, MAX_CADENCE, input.action_params().scope_hash());
 
     // =========================================================================
     // TV-G-002: Bounds Check
     // I-1 (Fail-Closed): Any out-of-bounds → DENY
     // =========================================================================
-    if input.magnitude > MAX_MAGNITUDE {
-        return GateOutput {
-            verdict: VerdictKind::Deny,
-            reason: ReasonCode::InvOutOfBounds,
+    if input.magnitude() > MAX_MAGNITUDE {
+        return GateOutput::new(
+            VerdictKind::Deny,
+            ReasonCode::InvOutOfBounds,
             limits,
-            finality: FinalityTag(NEUTRAL_FINALITY),
-        };
+            FinalityTag::new(NEUTRAL_FINALITY),
+        );
     }
 
     // =========================================================================
     // TV-G-003: Signal Validation
     // I-6 (No Oracle): Signal must be deterministic local data
     // =========================================================================
-    if input.signal.r_local < 0 || input.signal.quantified_entropy < 0 {
-        return GateOutput {
-            verdict: VerdictKind::Deny,
-            reason: ReasonCode::InvSignalInvalid,
+    if input.signal().r_local() < 0 || input.signal().quantified_entropy() < 0 {
+        return GateOutput::new(
+            VerdictKind::Deny,
+            ReasonCode::InvSignalInvalid,
             limits,
-            finality: FinalityTag(NEUTRAL_FINALITY),
-        };
+            FinalityTag::new(NEUTRAL_FINALITY),
+        );
     }
 
     // =========================================================================
     // Cadence Check (I-3: Bounded Action)
     // =========================================================================
-    if input.signal.observed_cadence > MAX_CADENCE {
-        return GateOutput {
-            verdict: VerdictKind::Deny,
-            reason: ReasonCode::InvCadenceExceeded,
+    if input.signal().observed_cadence() > MAX_CADENCE {
+        return GateOutput::new(
+            VerdictKind::Deny,
+            ReasonCode::InvCadenceExceeded,
             limits,
-            finality: FinalityTag(NEUTRAL_FINALITY),
-        };
+            FinalityTag::new(NEUTRAL_FINALITY),
+        );
     }
 
     // =========================================================================
     // TV-G-004: Valid Bounded Action
     // All invariants satisfied → ALLOW with NONE reason
     // =========================================================================
-    GateOutput {
-        verdict: VerdictKind::Allow,
-        reason: ReasonCode::None,
+    GateOutput::new(
+        VerdictKind::Allow,
+        ReasonCode::None,
         limits,
-        finality: FinalityTag(NEUTRAL_FINALITY),
-    }
+        FinalityTag::new(NEUTRAL_FINALITY),
+    )
 }
 
 // =============================================================================
@@ -258,19 +328,14 @@ mod tests {
     use super::*;
 
     fn make_valid_input() -> CanonicalInput {
-        CanonicalInput {
-            subject_id: [1; 32],
-            action_type: ActionType::Transfer,
-            action_params: ActionParams { scope_hash: [0; 32] },
-            magnitude: 500,
-            signal: Signal {
-                r_local: 100,
-                quantified_flow: 10,
-                quantified_entropy: 5,
-                observed_cadence: 50,
-            },
-            context_min: [0; 32],
-        }
+        CanonicalInput::new(
+            [1; 32],
+            ActionType::Transfer,
+            ActionParams::new([0; 32]),
+            500,
+            Signal::new(100, 10, 5, 50),
+            [0; 32],
+        )
     }
 
     #[test]
@@ -281,46 +346,58 @@ mod tests {
 
         let raw = RawInput {
             subject_id: &short_id,
-            action_type: valid.action_type,
-            scope_hash: &valid.action_params.scope_hash,
-            magnitude: valid.magnitude,
-            signal: valid.signal,
-            context_min: &valid.context_min,
+            action_type: valid.action_type(),
+            scope_hash: &valid.action_params().scope_hash(),
+            magnitude: valid.magnitude(),
+            signal: valid.signal(),
+            context_min: &valid.context_min(),
         };
 
         let out = syf_gate_entrypoint(raw);
 
-        assert_eq!(out.verdict, VerdictKind::Deny);
-        assert_eq!(out.reason, ReasonCode::InvInvalidInput);
+        assert_eq!(out.verdict(), VerdictKind::Deny);
+        assert_eq!(out.reason(), ReasonCode::InvInvalidInput);
         // Verify neutral scope on invalid input
-        assert_eq!(out.limits.scope, NEUTRAL_SCOPE);
+        assert_eq!(out.limits().scope(), NEUTRAL_SCOPE);
     }
 
     #[test]
     fn tv_g_002_excessive_magnitude() {
-        let mut input = make_valid_input();
-        input.magnitude = 1_500_000;
+        let input = CanonicalInput::new(
+            [1; 32],
+            ActionType::Transfer,
+            ActionParams::new([0; 32]),
+            1_500_000,
+            Signal::new(100, 10, 5, 50),
+            [0; 32],
+        );
         let out = syf_gate(input);
-        assert_eq!(out.verdict, VerdictKind::Deny);
-        assert_eq!(out.reason, ReasonCode::InvOutOfBounds);
+        assert_eq!(out.verdict(), VerdictKind::Deny);
+        assert_eq!(out.reason(), ReasonCode::InvOutOfBounds);
     }
 
     #[test]
     fn tv_g_003_invalid_signal() {
-        let mut input = make_valid_input();
-        input.signal.r_local = -1;
+        let input = CanonicalInput::new(
+            [1; 32],
+            ActionType::Transfer,
+            ActionParams::new([0; 32]),
+            500,
+            Signal::new(-1, 10, 5, 50),
+            [0; 32],
+        );
         let out = syf_gate(input);
-        assert_eq!(out.verdict, VerdictKind::Deny);
-        assert_eq!(out.reason, ReasonCode::InvSignalInvalid);
+        assert_eq!(out.verdict(), VerdictKind::Deny);
+        assert_eq!(out.reason(), ReasonCode::InvSignalInvalid);
     }
 
     #[test]
     fn tv_g_004_valid_bounded() {
         let input = make_valid_input();
         let out = syf_gate(input);
-        assert_eq!(out.verdict, VerdictKind::Allow);
-        assert_eq!(out.reason, ReasonCode::None);
-        assert!(out.limits.max_magnitude >= input.magnitude);
+        assert_eq!(out.verdict(), VerdictKind::Allow);
+        assert_eq!(out.reason(), ReasonCode::None);
+        assert!(out.limits().max_magnitude() >= input.magnitude());
     }
 
     #[test]
@@ -338,18 +415,18 @@ mod tests {
         let short_scope = [0u8; 16]; // 16 bytes instead of 32
 
         let raw = RawInput {
-            subject_id: &valid.subject_id,
-            action_type: valid.action_type,
+            subject_id: &valid.subject_id(),
+            action_type: valid.action_type(),
             scope_hash: &short_scope,
-            magnitude: valid.magnitude,
-            signal: valid.signal,
-            context_min: &valid.context_min,
+            magnitude: valid.magnitude(),
+            signal: valid.signal(),
+            context_min: &valid.context_min(),
         };
 
         let out = syf_gate_entrypoint(raw);
 
-        assert_eq!(out.verdict, VerdictKind::Deny);
-        assert_eq!(out.reason, ReasonCode::InvInvalidInput);
+        assert_eq!(out.verdict(), VerdictKind::Deny);
+        assert_eq!(out.reason(), ReasonCode::InvInvalidInput);
     }
 
     #[test]
@@ -359,18 +436,18 @@ mod tests {
         let short_ctx = [0u8; 0]; // Empty
 
         let raw = RawInput {
-            subject_id: &valid.subject_id,
-            action_type: valid.action_type,
-            scope_hash: &valid.action_params.scope_hash,
-            magnitude: valid.magnitude,
-            signal: valid.signal,
+            subject_id: &valid.subject_id(),
+            action_type: valid.action_type(),
+            scope_hash: &valid.action_params().scope_hash(),
+            magnitude: valid.magnitude(),
+            signal: valid.signal(),
             context_min: &short_ctx,
         };
 
         let out = syf_gate_entrypoint(raw);
 
-        assert_eq!(out.verdict, VerdictKind::Deny);
-        assert_eq!(out.reason, ReasonCode::InvInvalidInput);
+        assert_eq!(out.verdict(), VerdictKind::Deny);
+        assert_eq!(out.reason(), ReasonCode::InvInvalidInput);
     }
 
     #[test]
@@ -384,45 +461,45 @@ mod tests {
         for len in [0, 1, 16, 31, 33, 64] {
             let raw = RawInput {
                 subject_id: &buffer[..len],
-                action_type: valid.action_type,
-                scope_hash: &valid.action_params.scope_hash,
-                magnitude: valid.magnitude,
-                signal: valid.signal,
-                context_min: &valid.context_min,
+                action_type: valid.action_type(),
+                scope_hash: &valid.action_params().scope_hash(),
+                magnitude: valid.magnitude(),
+                signal: valid.signal(),
+                context_min: &valid.context_min(),
             };
             let out = syf_gate_entrypoint(raw);
-            assert_eq!(out.verdict, VerdictKind::Deny, "subject_id len={}", len);
-            assert_eq!(out.reason, ReasonCode::InvInvalidInput);
+            assert_eq!(out.verdict(), VerdictKind::Deny, "subject_id len={}", len);
+            assert_eq!(out.reason(), ReasonCode::InvInvalidInput);
         }
 
         // Test scope_hash with various lengths
         for len in [0, 1, 16, 31, 33, 64] {
             let raw = RawInput {
-                subject_id: &valid.subject_id,
-                action_type: valid.action_type,
+                subject_id: &valid.subject_id(),
+                action_type: valid.action_type(),
                 scope_hash: &buffer[..len],
-                magnitude: valid.magnitude,
-                signal: valid.signal,
-                context_min: &valid.context_min,
+                magnitude: valid.magnitude(),
+                signal: valid.signal(),
+                context_min: &valid.context_min(),
             };
             let out = syf_gate_entrypoint(raw);
-            assert_eq!(out.verdict, VerdictKind::Deny, "scope_hash len={}", len);
-            assert_eq!(out.reason, ReasonCode::InvInvalidInput);
+            assert_eq!(out.verdict(), VerdictKind::Deny, "scope_hash len={}", len);
+            assert_eq!(out.reason(), ReasonCode::InvInvalidInput);
         }
 
         // Test context_min with various lengths
         for len in [0, 1, 16, 31, 33, 64] {
             let raw = RawInput {
-                subject_id: &valid.subject_id,
-                action_type: valid.action_type,
-                scope_hash: &valid.action_params.scope_hash,
-                magnitude: valid.magnitude,
-                signal: valid.signal,
+                subject_id: &valid.subject_id(),
+                action_type: valid.action_type(),
+                scope_hash: &valid.action_params().scope_hash(),
+                magnitude: valid.magnitude(),
+                signal: valid.signal(),
                 context_min: &buffer[..len],
             };
             let out = syf_gate_entrypoint(raw);
-            assert_eq!(out.verdict, VerdictKind::Deny, "context_min len={}", len);
-            assert_eq!(out.reason, ReasonCode::InvInvalidInput);
+            assert_eq!(out.verdict(), VerdictKind::Deny, "context_min len={}", len);
+            assert_eq!(out.reason(), ReasonCode::InvInvalidInput);
         }
     }
 
@@ -431,15 +508,15 @@ mod tests {
         // Verify that exactly 32 bytes passes structural validation
         let valid = make_valid_input();
         let raw = RawInput {
-            subject_id: &valid.subject_id,       // Exactly 32
-            action_type: valid.action_type,
-            scope_hash: &valid.action_params.scope_hash, // Exactly 32
-            magnitude: valid.magnitude,
-            signal: valid.signal,
-            context_min: &valid.context_min,     // Exactly 32
+            subject_id: &valid.subject_id(),       // Exactly 32
+            action_type: valid.action_type(),
+            scope_hash: &valid.action_params().scope_hash(), // Exactly 32
+            magnitude: valid.magnitude(),
+            signal: valid.signal(),
+            context_min: &valid.context_min(),     // Exactly 32
         };
         let out = syf_gate_entrypoint(raw);
         // Should NOT fail on structure — may still fail on other checks
-        assert_ne!(out.reason, ReasonCode::InvInvalidInput);
+        assert_ne!(out.reason(), ReasonCode::InvInvalidInput);
     }
 }
