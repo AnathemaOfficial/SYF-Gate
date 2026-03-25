@@ -56,7 +56,7 @@ Signal computation fails
         ↓
 Return POISON_SIGNAL
         ↓
-Gate evaluates: signal.r_local < 0
+Gate evaluates: any negative poison field
         ↓
 Gate returns: DENY + INV_SIGNAL_INVALID
 ```
@@ -120,5 +120,8 @@ P0 is intentionally minimal. Future iterations may add:
 - **P1:** Sliding window cadence (requires trusted clock)
 - **P2:** Entropy from state delta (requires state tracking)
 - **P3:** R_local from SyFF computation (requires kernel integration)
+
+Each iteration MUST be audited against I-4 and I-6 before deployment.
+
 
 Each iteration MUST be audited against I-4 and I-6 before deployment.
