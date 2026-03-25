@@ -56,7 +56,7 @@ Signal computation fails
         ↓
 Return POISON_SIGNAL
         ↓
-Gate evaluates: signal.r_local < 0
+Gate evaluates: any negative poison field
         ↓
 Gate returns: DENY + INV_SIGNAL_INVALID
 ```

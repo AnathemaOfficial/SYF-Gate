@@ -8,8 +8,6 @@
 
 #![no_std]
 
-use core::fmt;
-
 // =============================================================================
 // TYPES — All fields mandatory, no optional inputs
 // =============================================================================
@@ -70,7 +68,8 @@ pub enum ActionType {
 /// Signal — deterministic local measurements (I-6: No Oracle).
 ///
 /// Fields are private. Construct via `Signal::new()`, read via getters.
-/// Negative values in r_local / quantified_entropy trigger POISON (I-1).
+/// Negative values in r_local / quantified_flow / quantified_entropy trigger
+/// POISON (I-1).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Signal {
     r_local: i64,
@@ -188,7 +187,7 @@ const NEUTRAL_FINALITY: [u8; 32] = [0u8; 32];
 /// quantified_entropy) triggers INV_SIGNAL_INVALID per I-1 (Fail-Closed).
 ///
 /// POISON_SIGNAL: Used when signal cannot be computed by SignalProvider.
-/// Negative r_local and entropy guarantee INV_SIGNAL_INVALID.
+/// Any negative poison field guarantees INV_SIGNAL_INVALID.
 ///
 /// Usage (in SignalProvider):
 /// ```
@@ -286,7 +285,10 @@ pub fn syf_gate(input: CanonicalInput) -> GateOutput {
     // TV-G-003: Signal Validation
     // I-6 (No Oracle): Signal must be deterministic local data
     // =========================================================================
-    if input.signal().r_local() < 0 || input.signal().quantified_entropy() < 0 {
+    if input.signal().r_local() < 0
+        || input.signal().quantified_flow() < 0
+        || input.signal().quantified_entropy() < 0
+    {
         return GateOutput::new(
             VerdictKind::Deny,
             ReasonCode::InvSignalInvalid,
@@ -384,6 +386,21 @@ mod tests {
             ActionParams::new([0; 32]),
             500,
             Signal::new(-1, 10, 5, 50),
+            [0; 32],
+        );
+        let out = syf_gate(input);
+        assert_eq!(out.verdict(), VerdictKind::Deny);
+        assert_eq!(out.reason(), ReasonCode::InvSignalInvalid);
+    }
+
+    #[test]
+    fn tv_g_003_invalid_signal_flow() {
+        let input = CanonicalInput::new(
+            [1; 32],
+            ActionType::Transfer,
+            ActionParams::new([0; 32]),
+            500,
+            Signal::new(100, -1, 5, 50),
             [0; 32],
         );
         let out = syf_gate(input);
