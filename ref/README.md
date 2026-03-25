@@ -41,7 +41,7 @@ ref/            ← SKETCH (non-canonical, illustrative)
 When Signal computation fails, implementations MUST return poison values
 that guarantee Gate rejection per I-1 (Fail-Closed).
 
-**Canonical Rule:** Any negative value in Signal fields (`r_local`, 
+**Canonical Rule:** Any negative value in Signal fields (`r_local`,
 `quantified_flow`, `quantified_entropy`) triggers `INV_SIGNAL_INVALID`.
 
 | Field | Poison Value | Effect |
@@ -75,14 +75,14 @@ See `SIGNAL_PROVIDER_SPEC.md` in `docs/` for full specification.
 - No heap allocation (`alloc` forbidden)
 - No panics — all error paths return `Verdict::Deny`
 - No RNG, no time, no external state
-- Deterministic SHA-256 for `finality_tag` only
+- Neutral fixed finality tag in the P0 sketch
 - **Panic-free by construction** — length checked before `copy_from_slice`
 
 ### Python (`syf_gate_ref.py`)
 - Pure function — no module-level state
 - No I/O operations
 - Immutable inputs (`frozen=True`)
-- Limited imports: `typing`, `enum`, `hashlib` only
+- Limited imports: `dataclasses`, `typing`, `enum`
 - Errors mapped to `Verdict(reason=...)`, no exceptions
 
 ---
@@ -108,6 +108,11 @@ defined in `specs/SYF_GATE_TEST_VECTORS.md`.
 
 Failure to pass any vector indicates implementation error,
 **not specification defect**.
+
+---
+
+*Do not treat this as code to deploy.*  
+*Treat it as proof that deployment is possible without violating invariants.*
 
 ---
 
