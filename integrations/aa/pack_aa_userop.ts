@@ -161,13 +161,35 @@ export async function packAAUserOp(
 
 /**
  * Synchronous version for environments without async crypto.
- * WARNING: Uses weak hash — for testing only.
+ *
+ * **DO NOT USE IN PRODUCTION.**
+ *
+ * This function uses {@link hash32Sync} — a trivially-invertible XOR fold, not
+ * a cryptographic hash. Using it in production would let an attacker craft two
+ * different `(target, nonce, callData)` triples that produce the same
+ * `scope_hash` (authority boundary) and `context_min` (anti-replay), breaking
+ * both at once.
+ *
+ * A runtime guard refuses to run this function when `NODE_ENV === "production"`
+ * (or when the equivalent Deno/Bun environment flag is set), so even if an
+ * integrator forgets to remove a test-path call, the production process fails
+ * closed rather than silently accepting forged hashes. For async (production)
+ * use, call {@link packAAUserOp} which uses SHA-256 via Web Crypto.
  */
 export function packAAUserOpSync(
   userOp: UserOperationMinimal,
   intent: AAIntentMeta
 ): PackResult {
-  
+  // Fail-closed production guard. The sync path is intentionally unsafe.
+  const envCandidate =
+    (typeof process !== "undefined" && process.env && process.env.NODE_ENV) ||
+    (typeof (globalThis as { Deno?: { env?: { get: (k: string) => string | undefined } } }).Deno !== "undefined"
+      ? (globalThis as { Deno: { env: { get: (k: string) => string | undefined } } }).Deno.env.get("NODE_ENV")
+      : undefined);
+  if (envCandidate === "production") {
+    return { ok: false, code: "INV_STATE_IMPOSSIBLE" };
+  }
+
   if (!userOp.sender || (userOp.sender.length !== 20 && userOp.sender.length !== 32)) {
     return { ok: false, code: "INV_INVALID_INPUT" };
   }

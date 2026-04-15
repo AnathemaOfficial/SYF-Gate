@@ -103,9 +103,11 @@ export async function syfGateEnforcer(
 
   const packed = packResult.value;
 
-  // Step 2: Compute signal from TRUSTED state (server-only)
-  const signal = computeSignalP0(packed.subject_id);
-  
+  // Step 2: Compute signal from TRUSTED state (server-only).
+  // `computeSignalP0` is async since the store refactor — it serialises
+  // per-subject operations so a concurrent `recordAction` cannot race.
+  const signal = await computeSignalP0(packed.subject_id);
+
   // Step 3: Call Gate kernel
   const gateInput: GateInput = {
     subject_id: packed.subject_id,
@@ -138,11 +140,23 @@ export async function syfGateEnforcer(
 
   // Step 5: Branch on verdict
   if (verdictWire === "ALLOW") {
-    // Record action in trusted state (post-ALLOW)
-    recordAction(packed.subject_id, packed.magnitude);
-    
-    // Proceed to next middleware / handler
-    await next();
+    // Budget is only consumed on CONFIRMED execution, never on Gate verdict
+    // alone. Previously `recordAction` ran before `next()` — meaning a
+    // handler that threw still drained budget, and a replaced Gate stub that
+    // always returned ALLOW could drain real budget. We now wrap `next()` in
+    // try/finally and only call `recordAction` once the downstream handler
+    // returned without throwing. This addresses audit finding H-2.
+    let nextThrew = false;
+    try {
+      await next();
+    } catch (err) {
+      nextThrew = true;
+      throw err;
+    } finally {
+      if (!nextThrew) {
+        await recordAction(packed.subject_id, packed.magnitude);
+      }
+    }
     return;
   }
 
