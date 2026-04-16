@@ -35,9 +35,28 @@ interface EnforceRequest {
 interface EnforceResponse {
   status: (code: number) => EnforceResponse;
   json: (body: unknown) => void;
+  /**
+   * Optional Express/Fastify-style indicator that the response has already
+   * been sent. When present and truthy, the error handler MUST NOT try to
+   * write a new body (avoids double-fault / headers-already-sent crashes).
+   */
+  headersSent?: boolean;
 }
 
 type NextFunction = () => void | Promise<void>;
+
+/**
+ * Render a byte array as lowercase hex for structured logs.
+ * Keeps logs greppable without depending on Node's `Buffer` (browser-safe).
+ */
+function bytesToHex(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    out += (b < 16 ? "0" : "") + b.toString(16);
+  }
+  return out;
+}
 
 // =============================================================================
 // GATE KERNEL INTERFACE
@@ -74,13 +93,17 @@ declare function syf_gate(input: GateInput): GateOutput;
 
 /**
  * SYF Gate Enforcement Middleware.
- * 
- * MUTE: Responses contain only verdict + closed-set reason code.
- * FAIL-CLOSED: Any error → DENY + INV_INVALID_INPUT.
+ *
+ * BINARY: Responses carry only `{ verdict: "ALLOW" | "DENY" }` — no reason
+ *   code on the wire per Book of SYF I-7 (Silence). Reason codes remain
+ *   available in server-side audit logs via `reason_wire.ts` mappings.
+ * UNIFORM STATUS: All verdicts (ALLOW and every DENY path, including
+ *   `INV_STATE_IMPOSSIBLE`) return HTTP 200 — no status oracle.
+ * FAIL-CLOSED: Any unexpected error → DENY with no semantic hint.
  * TRUSTED: Uses server-side signal provider (not client data).
- * 
+ *
  * @param req Request with body containing RawIntent
- * @param res Response object
+ * @param res Response object (may expose `headersSent` for post-response guards)
  * @param next Next middleware (called only on ALLOW)
  */
 export async function syfGateEnforcer(
@@ -128,9 +151,14 @@ export async function syfGateEnforcer(
     gateOutput = syf_gate(gateInput);
   } catch {
     // Gate threw (should never happen with panic-free impl)
-    // Fail-closed: treat as state impossible
+    // Fail-closed: treat as state impossible.
+    //
+    // Codex verification 2026-04-16 (residual G-ORACLE): the HTTP status
+    // was hard-coded to 409 here, creating a 2-class oracle alongside the
+    // canonical 200 deny path. Now uses `HTTP_STATUS_MAP` so the external
+    // wire stays uniformly 200 per I-7 (Silence).
     const body = buildResponseBody("DENY", "INV_STATE_IMPOSSIBLE");
-    res.status(409).json(body);
+    res.status(HTTP_STATUS_MAP["INV_STATE_IMPOSSIBLE"]).json(body);
     return;
   }
 
@@ -176,6 +204,26 @@ export async function syfGateEnforcer(
         // send a different HTTP body. Propagate the error so surrounding
         // infrastructure (error middleware, observability) sees it —
         // never silently swallow.
+        //
+        // Codex verification 2026-04-16: framework capture of async
+        // rejections is host-dependent (Express 4 direct middleware does
+        // not reliably propagate them). A structured log before the throw
+        // is the only LOCAL guarantee that operators see the anomaly,
+        // regardless of whether the host error boundary catches it.
+        /* eslint-disable no-console */
+        console.error(
+          JSON.stringify({
+            event: "gate_record_action_failed",
+            severity: "critical",
+            subject_id: bytesToHex(packed.subject_id),
+            magnitude: packed.magnitude.toString(),
+            error: recordErr instanceof Error ? recordErr.message : String(recordErr),
+            note:
+              "Side-effect committed but budget not debited. " +
+              "Investigate store availability. Follow-up: reserve-then-finalize.",
+          }),
+        );
+        /* eslint-enable no-console */
         throw recordErr;
       }
     }
@@ -191,14 +239,46 @@ export async function syfGateEnforcer(
 /**
  * Express-style error handler for Gate enforcement.
  * Catches any unhandled errors and returns fail-closed response.
+ *
+ * Codex verification 2026-04-16: two changes from the prior version.
+ *
+ * 1. Residual G-ORACLE: status was hard-coded to 409, creating a 2-class
+ *    oracle with the canonical 200 deny path. Now uses `HTTP_STATUS_MAP`
+ *    so every external deny is uniformly HTTP 200.
+ *
+ * 2. Post-response safety for the G-RECORD fix: when `recordAction()`
+ *    fails AFTER the downstream handler has already sent its response,
+ *    the error is thrown from `syfGateEnforcer` and lands here — but
+ *    the response is already committed. Writing a second body would
+ *    crash with "headers already sent". We now check `headersSent`
+ *    defensively and log-only in that case; operators see the anomaly
+ *    via the structured log emitted earlier by `syfGateEnforcer`.
  */
 export function gateErrorHandler(
-  _err: unknown,
+  err: unknown,
   _req: EnforceRequest,
   res: EnforceResponse,
   _next: NextFunction
 ): void {
-  // Fail-closed: unknown error → DENY
+  if (res.headersSent === true) {
+    // Downstream handler already wrote a response. Cannot safely overwrite.
+    // The anomaly was already logged at the throw site; this handler is
+    // a no-op in the post-response failure mode.
+    /* eslint-disable no-console */
+    console.error(
+      JSON.stringify({
+        event: "gate_error_handler_post_response",
+        severity: "warning",
+        error: err instanceof Error ? err.message : String(err),
+        note:
+          "Response already sent when error reached gateErrorHandler; " +
+          "no response rewrite attempted. See preceding event for details.",
+      }),
+    );
+    /* eslint-enable no-console */
+    return;
+  }
+  // Fail-closed: unknown error → DENY (no reason code on the wire).
   const body = buildResponseBody("DENY", "INV_STATE_IMPOSSIBLE");
-  res.status(409).json(body);
+  res.status(HTTP_STATUS_MAP["INV_STATE_IMPOSSIBLE"]).json(body);
 }
