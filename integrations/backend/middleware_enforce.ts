@@ -146,15 +146,37 @@ export async function syfGateEnforcer(
     // always returned ALLOW could drain real budget. We now wrap `next()` in
     // try/finally and only call `recordAction` once the downstream handler
     // returned without throwing. This addresses audit finding H-2.
+    //
+    // Audit 2026-04-16 (G-RECORD): `recordAction` failure was silently
+    // swallowed. If the store is down, the downstream handler succeeded but
+    // the budget was never debited — a "free action" bug. We now propagate
+    // `recordAction` failures as exceptions so the error is observable to
+    // the surrounding framework (error middleware, process-level uncaught
+    // handler, or telemetry). The downstream side effect still happened;
+    // what we protect is that the anomaly is NOT silently absorbed.
+    //
+    // Proper fix (follow-up): replace post-hoc `recordAction` with a
+    // reserve-then-finalize pattern — decrement budget BEFORE `next()` and
+    // release the reservation if `next()` throws. That pattern closes the
+    // window completely (the side effect cannot happen without a prior
+    // reservation). See signal_provider_p0.ts for the planned refactor.
     let nextThrew = false;
     try {
       await next();
     } catch (err) {
       nextThrew = true;
       throw err;
-    } finally {
-      if (!nextThrew) {
+    }
+    if (!nextThrew) {
+      try {
         await recordAction(packed.subject_id, packed.magnitude);
+      } catch (recordErr) {
+        // Budget accounting failure after successful side-effect.
+        // The downstream handler already wrote its response, so we cannot
+        // send a different HTTP body. Propagate the error so surrounding
+        // infrastructure (error middleware, observability) sees it —
+        // never silently swallow.
+        throw recordErr;
       }
     }
     return;
