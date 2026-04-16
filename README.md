@@ -1,3 +1,5 @@
+<img width="256" height="256" alt="syf gate" src="https://github.com/user-attachments/assets/8dca41a8-888a-4df9-a423-13c60b809970" />
+
 # SYF Gate
 
 **Law-layer security primitive for autonomous systems.**
