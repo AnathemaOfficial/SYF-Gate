@@ -42,6 +42,29 @@ SYF Gate is:
 
 ---
 
+## Position in Lineage
+
+SYF-Gate is an **intermediate primitive**, not a terminal core.
+
+Canonical chronology of the ecosystem:
+
+1. **SYF-Core** — upstream thermodynamic theory (`R = (F × E) / K`)
+2. **SYF-Gate** — structural admissibility primitive (this repo)
+3. **SYF-Shield** — capacity, progression, and irreversibility primitive
+4. **Anathema-Breaker** — sealed synthesis of Gate and Shield
+5. **SLIME-Core** — canonical execution membrane built from that core
+
+### Complementarity with Shield
+
+- **Gate** determines whether progression **may begin**.
+- **Shield** governs how capacity is **consumed** once engagement has begun.
+- Their sealed synthesis becomes **Anathema-Breaker**.
+
+Shield's progression is triggered only by a Gate ALLOW. Gate and Shield are
+complementary primitives, not competing deny layers.
+
+---
+
 ## Invariants (Summary)
 
 SYF Gate enforces ten non-negotiable invariants:
